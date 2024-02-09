@@ -1,119 +1,109 @@
 <?php
-    class Database {
-        protected $connection;
-        protected $query;
-        protected $show_errors = TRUE;
-        protected $query_closed = TRUE;
 
-        public function __construct($host = 'localhost', $user = 'root', $password = '', $name = '', $charset = 'utf8') {
-            $this->connection = new mysqli($host, $user, $password, $name);
-            if ($this->connection->connect_error)
-                $this->error('Failed to connect to MySQL - ' . $this->connection->connect_error);
-            $this->connection->set_charset($charset);
+    class Database {
+        private PDO $connection;
+        private ?PDOStatement $query = null;
+        private bool $show_errors = true;
+
+        public function __construct(
+            string $host = 'localhost',
+            string $user = 'root',
+            string $password = '',
+            string $name = '',
+            string $charset = 'utf8'
+        ) {
+            try {
+                $this->connection = new PDO("mysql:host=$host;dbname=$name;charset=$charset", $user, $password);
+                $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            } catch (PDOException $e) {
+                $this->error($e);
+            }
         }
 
-        public function query($query): Database {
-            if (!$this->query_closed)
-                $this->query->close();
-            if ($this->query = $this->connection->prepare($query)) {
-                if (func_num_args() > 1) {
-                    $x = func_get_args();
-                    $args = array_slice($x, 1);
+        public function query(string $query, ...$args): self {
+            try {
+                $this->close();
+                $this->query = $this->connection->prepare($query);
+
+                if ($args) {
                     $types = '';
-                    $args_ref = array();
-                    foreach ($args as $k => &$arg) {
-                        if (is_array($args[$k])) {
-                            foreach ($args[$k] as $j => &$a) {
-                                $types .= $this->_gettype($args[$k][$j]);
-                                $args_ref[] = &$a;
-                            }
-                        } else {
-                            $types .= $this->_gettype($args[$k]);
-                            $args_ref[] = &$arg;
-                        }
+                    foreach ($args as $arg) {
+                        $types .= $this->_gettype($arg);
                     }
-                    array_unshift($args_ref, $types);
-                    call_user_func_array(array($this->query, 'bind_param'), $args_ref);
+                    $this->bindParams($types, ...$args);
                 }
+
                 $this->query->execute();
-                if ($this->query->errno)
-                    $this->error('Unable to process MySQL query (check your params) - ' . $this->query->error);
-                $this->query_closed = FALSE;
-            } else
-                $this->error('Unable to prepare MySQL statement (check your syntax) - ' . $this->connection->error);
+            } catch (PDOException $e) {
+                $this->error($e);
+            }
             return $this;
         }
 
-
-        public function fetchAll($callback = null): array {
-            $params = array();
-            $row = array();
-            $meta = $this->query->result_metadata();
-            while ($field = $meta->fetch_field())
-                $params[] = &$row[$field->name];
-            call_user_func_array(array($this->query, 'bind_result'), $params);
-            $result = array();
-            while ($this->query->fetch()) {
-                $r = array();
-                foreach ($row as $key => $val)
-                    $r[$key] = $val;
-                if ($callback != null && is_callable($callback)) {
-                    $value = call_user_func($callback, $r);
-                    if ($value == 'break') break;
-                } else
-                    $result[] = $r;
+        public function fetchAll(?callable $callback = null): array {
+            $result = [];
+            if ($this->query !== null) {
+                $this->query->execute();
+                while ($row = $this->query->fetch(PDO::FETCH_ASSOC)) {
+                    if ($callback !== null && is_callable($callback)) {
+                        $value = call_user_func($callback, $row);
+                        if ($value === 'break')
+                            break;
+                    } else
+                        $result[] = $row;
+                }
+                $this->close();
             }
-            $this->query->close();
-            $this->query_closed = TRUE;
             return $result;
         }
 
         public function fetchArray(): array {
-            $params = array();
-            $row = array();
-            $meta = $this->query->result_metadata();
-            while ($field = $meta->fetch_field())
-                $params[] = &$row[$field->name];
-            call_user_func_array(array($this->query, 'bind_result'), $params);
-            $result = array();
-            while ($this->query->fetch())
-                foreach ($row as $key => $val)
-                    $result[$key] = $val;
-            $this->query->close();
-            $this->query_closed = TRUE;
+            $result = [];
+            if ($this->query !== null) {
+                $this->query->execute();
+                $columns = $this->query->fetch(PDO::FETCH_ASSOC);
+                if ($columns) {
+                    do
+                        $result[] = $columns;
+                    while ($columns = $this->query->fetch(PDO::FETCH_ASSOC));
+                }
+                $this->close();
+            }
             return $result;
         }
 
-        public function close(): bool {
-            return $this->connection->close();
-        }
-
-        public function numRows() {
-            $this->query->store_result();
-            return $this->query->num_rows;
-        }
-
-        public function affectedRows() {
-            return $this->query->affected_rows;
+        public function getRowCount(): int {
+            if ($this->query !== null)
+                return $this->query->rowCount();
+            return 0;
         }
 
         public function lastInsertID() {
-            return $this->connection->insert_id;
-        }
-
-        public function error($error) {
-            if ($this->show_errors)
-                exit($error);
+            return $this->connection->lastInsertId();
         }
 
         private function _gettype($var): string {
-            if (is_string($var)) return 's';
-            if (is_float($var)) return 'd';
-            if (is_int($var)) return 'i';
-            return 'b';
+            return is_string($var) ? 's' : (is_float($var) ? 'd' : (is_int($var) ? 'i' : 'b'));
         }
 
-        public function getConn(): mysqli {
+        private function bindParams(string $types, ...$args): void {
+            $this->query->bindParam(1, $args[0], $types);
+            for ($i = 1; $i < count($args); $i++)
+                $this->query->bindParam($i + 1, $args[$i], $types);
+        }
+
+        private function error(Exception $error): void {
+            if ($this->show_errors)
+                echo "Unhandled Exception: " . $error->getMessage();
+        }
+
+        public function getConn(): PDO {
             return $this->connection;
+        }
+
+        public function close(): bool {
+            if ($this->query !== null)
+                $this->query->closeCursor();
+            return true;
         }
     }
