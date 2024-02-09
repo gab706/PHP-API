@@ -10,10 +10,10 @@
     header('Content-Type: application/json');
     header('Access-Control-Allow-Origin: *');
 
-    require_once(__ROOT . '/src/models/RouteManager.php');
-    $Router = new RouteManager();
-
-    $Router->addRoute('/test', 'src/routes/test.php');
+    require_once('./src/models/RouteManager.php');
+    $Router = new RouteManager(array(
+        '/test' => 'src/routes/test.php'
+    ));
 
     $Router->run();
 
