@@ -97,7 +97,7 @@
 
         private function isValidReferer(): bool {
             $referer = $_SERVER['HTTP_REFERER'] ?? '';
-            return isset($_SERVER['HTTP_REFERER']) && strpos($referer, 'api.bytegrasp.org') !== false;
+            return isset($_SERVER['HTTP_REFERER']) && strpos($referer, 'YOUR_WEBSITE.orb') !== false;
         }
 
         public function reject(string $reason, int $code): void {
